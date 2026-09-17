@@ -1,0 +1,21 @@
+import { Client } from 'https://cdn.jsdelivr.net/npm/@gradio/client@1.4.0/dist/index.min.js';
+const SPACE='https://fefrr-ngoc-huyen-tts-11.hf.space'; const MAX=100000, DAILY=100000, CHUNK=350;
+const $=id=>document.getElementById(id); const normalize=t=>String(t||'').replace(/\r\n?/g,'\n').trim();
+const count=t=>(normalize(t).match(/\S+/gu)||[]).length; const dateKey=()=>new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Ho_Chi_Minh'}).format(new Date());
+function load(){try{return JSON.parse(localStorage.getItem('nh_quota')||'')}catch{return null}}
+function save(q){localStorage.setItem('nh_quota',JSON.stringify(q))}
+function initQuota(){const today=dateKey();let q=load();if(!q){q={balance:DAILY,last:today};save(q)}else{const a=new Date(q.last+'T00:00:00Z'),b=new Date(today+'T00:00:00Z');const days=Math.max(0,Math.round((b-a)/86400000));if(days){q.balance+=days*DAILY;q.last=today;save(q)}}return q}
+let quota=initQuota(); let client=null; let busy=false;
+function renderQuota(){ $('quota').textContent=Number(quota.balance).toLocaleString('vi-VN')+' từ';$('today').textContent='Hôm nay: '+quota.last; }
+function renderCounts(){const w=count($('text').value);$('words').textContent=w.toLocaleString('vi-VN');$('chars').textContent=normalize($('text').value).length.toLocaleString('vi-VN');$('go').disabled=!w||w>MAX||w>quota.balance||busy;if(w>MAX)status('Vượt 100.000 từ cho một lần tạo.','error');else if(w>quota.balance)status('Không đủ quota còn lại.','error');else status(w?'Sẵn sàng.':'');localStorage.setItem('nh_draft',$('text').value)}
+function status(t,c=''){$('status').className='status '+c;$('status').textContent=t}
+function chunks(text){const ws=normalize(text).split(/\s+/);const out=[];for(let i=0;i<ws.length;i+=CHUNK)out.push(ws.slice(i,i+CHUNK).join(' '));return out}
+async function ensureClient(){if(!client)client=await Client.connect(SPACE);return client}
+function fileUrl(x){if(typeof x==='string')return x;if(x?.url)return x.url;if(x?.path)return SPACE+'/gradio_api/file='+encodeURIComponent(x.path);return ''}
+async function synth(chunk,speed){const c=await ensureClient();const r=await c.predict('/predict',[chunk,Number(speed)]);const u=fileUrl(r.data?.[0]);if(!u)throw new Error('API không trả về audio.');return u}
+$('text').value=localStorage.getItem('nh_draft')||'';renderQuota();renderCounts();
+$('text').addEventListener('input',renderCounts);$('speed').addEventListener('input',()=>{$('speedv').textContent=Number($('speed').value).toFixed(1)+'×'});
+$('clear').onclick=()=>{$('text').value='';$('results').innerHTML='';renderCounts()};$('file').onchange=async e=>{const f=e.target.files?.[0];if(f){$('text').value=await f.text();renderCounts()}};
+$('go').onclick=async()=>{if(busy)return;const text=normalize($('text').value),w=count(text);if(!w||w>MAX||w>quota.balance)return;busy=true;renderCounts();$('results').innerHTML='';let parts=chunks(text);quota.balance-=w;save(quota);renderQuota();try{for(let i=0;i<parts.length;i++){status(`Đang tạo đoạn ${i+1}/${parts.length}…`);$('fill').style.width=Math.round((i/parts.length)*100)+'%';const u=await synth(parts[i],$('speed').value);const wrap=document.createElement('div');wrap.className='chunk';const b=document.createElement('b');b.textContent=`Đoạn ${i+1}`;const a=document.createElement('audio');a.controls=true;a.preload='metadata';a.src=u;const link=document.createElement('a');link.href=u;link.target='_blank';link.rel='noopener';link.textContent='⬇ Mở / tải audio đoạn này';wrap.append(b,a,link);$('results').appendChild(wrap)}$('fill').style.width='100%';status(`Hoàn tất ${w.toLocaleString('vi-VN')} từ. Quota còn ${quota.balance.toLocaleString('vi-VN')} từ.`,'ok')}catch(e){quota.balance+=w;save(quota);renderQuota();$('fill').style.width='0';status('TTS lỗi — quota đã hoàn lại: '+(e?.message||e),'error')}finally{busy=false;renderCounts()}};
+window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();window._install=e;$('install').style.display='block'});$('install').onclick=async()=>{if(window._install){window._install.prompt();await window._install.userChoice;window._install=null;$('install').style.display='none'}else status('Chrome → menu ⋮ → Thêm vào màn hình chính.','ok')};
+if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
